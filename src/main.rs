@@ -1,43 +1,105 @@
-use crate::tiled::*;
-use bevy::prelude::*;
-use bevy_ecs_tilemap::prelude::*;
+use bevy::{core::FixedTimestep, prelude::*};
+use bevy_retrograde::prelude::*;
 
-#[path = "helpers/mod.rs"]
-mod helpers;
-mod tiled;
+#[derive(StageLabel, Debug, Clone, Hash, Eq, PartialEq)]
+struct GameStage;
 
-fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
+fn main() {
+    App::build()
+        .insert_resource(WindowDescriptor {
+            title: "Bevy Retrograde LDtk Map".into(),
+            ..Default::default()
+        })
+        .add_plugins(RetroPlugins)
+        .add_startup_system(setup.system())
+        .add_stage(
+            GameStage,
+            SystemStage::parallel()
+                .with_run_criteria(FixedTimestep::step(0.012))
+                .with_system(move_camera.system()),
+        )
+        .add_system(set_background_color.system())
+        .run();
+}
 
-    let handle: Handle<TiledMap> = asset_server.load("maps/player_house_bedroom.tmx");
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    // Enable hot reload
+    asset_server.watch_for_changes().unwrap();
 
-    let map_entity = commands.spawn().id();
+    // Spawn the camera
+    commands.spawn().insert_bundle(CameraBundle {
+        camera: Camera {
+            size: CameraSize::FixedHeight(180),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
 
-    commands.entity(map_entity).insert_bundle(TiledMapBundle {
-        tiled_map: handle,
-        map: Map::new(0u16, map_entity),
-        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+    // Spawn the map
+    commands.spawn().insert_bundle(LdtkMapBundle {
+        map: asset_server.load("maps/player_house_bedroom.ldtk"),
+        // We offset the map a little to move it more to the center of the screen, because maps are
+        // spawned with (0, 0) as the top-left corner of the map
+        transform: Transform::from_xyz(-80., -80., 0.),
         ..Default::default()
     });
 }
 
-fn main() {
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+/// This system moves the camera so you can look around the map
+fn move_camera(
+    keyboard_input: Res<Input<KeyCode>>,
+    mut query: Query<&mut Transform, With<Camera>>,
+) {
+    for mut transform in query.iter_mut() {
+        const SPEED: f32 = 1.;
 
-    App::build()
-        .insert_resource(WindowDescriptor {
-            width: 1270.0,
-            height: 720.0,
-            title: String::from("Tiled map editor example"),
-            ..Default::default()
-        })
-        .add_plugins(DefaultPlugins)
-        .add_plugin(TilemapPlugin)
-        .add_plugin(TiledMapPlugin)
-        .add_startup_system(startup.system())
-        .add_system(helpers::camera::movement.system())
-        .add_system(helpers::texture::set_texture_filters_to_nearest.system())
-        .run();
+        let mut direction = Vec3::new(0., 0., 0.);
+
+        if keyboard_input.pressed(KeyCode::Left) {
+            direction += Vec3::new(-SPEED, 0., 0.);
+        }
+
+        if keyboard_input.pressed(KeyCode::Right) {
+            direction += Vec3::new(SPEED, 0., 0.);
+        }
+
+        if keyboard_input.pressed(KeyCode::Up) {
+            direction += Vec3::new(0., -SPEED, 0.);
+        }
+
+        if keyboard_input.pressed(KeyCode::Down) {
+            direction += Vec3::new(0., SPEED, 0.);
+        }
+
+        transform.translation += direction;
+    }
+}
+
+/// This system sets the camera background color to the background color of the maps first level
+fn set_background_color(
+    mut cameras: Query<&mut Camera>,
+    maps: Query<&Handle<LdtkMap>>,
+    ldtk_map_assets: Res<Assets<LdtkMap>>,
+) {
+    // If the camera background color isn't set, set it. We also only read the clear
+    // color of the first level for now.
+    for map_handle in maps.iter() {
+        if let Some(map) = ldtk_map_assets.get(map_handle) {
+            let level = map.project.levels.get(0).unwrap();
+
+            for mut camera in cameras.iter_mut() {
+                let decoded = hex::decode(
+                    level
+                        .bg_color
+                        .as_ref()
+                        .unwrap_or(&map.project.default_level_bg_color)
+                        .strip_prefix("#")
+                        .expect("Invalid background color"),
+                )
+                .expect("Invalid background color");
+
+                camera.background_color = Color::from_rgba8(decoded[0], decoded[1], decoded[2], 1);
+            }
+        }
+    }
 }
