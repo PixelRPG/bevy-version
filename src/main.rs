@@ -1,52 +1,43 @@
+use crate::tiled::*;
 use bevy::prelude::*;
+use bevy_ecs_tilemap::prelude::*;
 
-#[derive(Component)]
-struct Person;
+#[path = "helpers/mod.rs"]
+mod helpers;
+mod tiled;
 
-#[derive(Component)]
-struct Name(String);
+fn startup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn_bundle(OrthographicCameraBundle::new_2d());
 
-#[derive(Component)]
-struct GreetTimer(Timer);
+    let handle: Handle<TiledMap> = asset_server.load("maps/player_house_bedroom.tmx");
 
-fn add_people(mut commands: Commands) {
-    commands
-        .spawn()
-        .insert(Person)
-        .insert(Name("Elaina Proctor".to_string()));
-    commands
-        .spawn()
-        .insert(Person)
-        .insert(Name("Renzo Hume".to_string()));
-    commands
-        .spawn()
-        .insert(Person)
-        .insert(Name("Zayna Nieves".to_string()));
-}
+    let map_entity = commands.spawn().id();
 
-fn greet_people(time: Res<Time>, mut timer: ResMut<GreetTimer>, query: Query<&Name, With<Person>>) {
-    // update our timer with the time elapsed since the last update
-    // if that caused the timer to finish, we say hello to everyone
-    if timer.0.tick(time.delta()).just_finished() {
-        for name in query.iter() {
-            println!("hello {}!", name.0);
-        }
-    }
-}
-
-pub struct HelloPlugin;
-
-impl Plugin for HelloPlugin {
-    fn build(&self, app: &mut App) {
-        app.insert_resource(GreetTimer(Timer::from_seconds(2.0, true)))
-            .add_startup_system(add_people.system())
-            .add_system(greet_people.system());
-    }
+    commands.entity(map_entity).insert_bundle(TiledMapBundle {
+        tiled_map: handle,
+        map: Map::new(0u16, map_entity),
+        transform: Transform::from_xyz(0.0, 0.0, 0.0),
+        ..Default::default()
+    });
 }
 
 fn main() {
-    App::new()
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
+    App::build()
+        .insert_resource(WindowDescriptor {
+            width: 1270.0,
+            height: 720.0,
+            title: String::from("Tiled map editor example"),
+            ..Default::default()
+        })
         .add_plugins(DefaultPlugins)
-        .add_plugin(HelloPlugin)
+        .add_plugin(TilemapPlugin)
+        .add_plugin(TiledMapPlugin)
+        .add_startup_system(startup.system())
+        .add_system(helpers::camera::movement.system())
+        .add_system(helpers::texture::set_texture_filters_to_nearest.system())
         .run();
 }
